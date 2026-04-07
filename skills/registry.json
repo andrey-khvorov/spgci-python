@@ -1,0 +1,11 @@
+{
+  "skills": [
+    {
+      "name": "marketcommentary",
+      "title": "Market Commentary (AIRD)",
+      "description": "Retrieve unstructured Market Commentary content from AIRD sources.",
+      "path": "market_commentary/skills.md",
+      "version": "0.1.0"
+    }
+  ]
+}
