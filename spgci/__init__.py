@@ -47,6 +47,10 @@ from .integrated_energy_scenarios import IntegratedEnergyScenarios
 from .agriculture_and_food import AgriAndFood
 from .americas_gas import AmericasGas
 
+from . import market_commentary
+from .market_commentary import MarketCommentary
+from . import auth
+
 
 from .config import username, password, set_credentials, version
 
@@ -79,4 +83,7 @@ __all__ = [
     "IntegratedEnergyScenarios",
     "AgriAndFood",
     "AmericasGas",
+    "market_commentary",
+    "MarketCommentary",
+    "auth",
 ]

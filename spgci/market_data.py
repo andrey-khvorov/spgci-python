@@ -115,7 +115,8 @@ class MarketData:
             cols = ["symbol", "description"]
             df: pd.DataFrame = df[cols + [x for x in df.columns if x not in cols]]  # type: ignore
 
-        df._preview_rows = 100  # prints a subset when in agent mode
+        # Using setattr avoids type-checker errors for dynamic DataFrame attributes.
+        setattr(df, "_preview_rows", 100)  # prints a subset when in agent mode
         return df
 
     @staticmethod

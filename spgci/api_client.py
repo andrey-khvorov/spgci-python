@@ -16,7 +16,7 @@
 import requests
 import spgci.config
 from spgci.auth import get_token
-from typing import Callable, Dict, Any, NamedTuple, Union
+from typing import Callable, Dict, Any, NamedTuple, Union, Optional
 from pandas import DataFrame
 import pandas as pd
 from tqdm import tqdm
@@ -120,6 +120,62 @@ def _get(
     return response
 
 
+@_auth_retry
+@_throttle_retry
+def _post(
+    url: str,
+    body: Dict[Any, Any],
+    session: requests.Session,
+    params: Optional[Dict[Any, Any]] = None,
+) -> requests.Response:
+    headers = {
+        "User-Agent": f"spgci-py/{spgci.config.version}",
+    }
+
+    if spgci.config.get_token() is not None:
+        token = spgci.config.get_token()
+    else:
+        token = spgci.auth.get_token(
+            spgci.config.username,
+            spgci.config.password,
+            spgci.config.base_url,
+        )
+
+    headers["Authorization"] = f"Bearer {token}"
+
+    # should remove at some point..
+    sleep(spgci.config.sleep_time)
+
+    response: requests.Response = session.post(
+        url=url,
+        params=params,
+        json=body,
+        headers=headers,
+        verify=spgci.config.verify_ssl,
+        proxies=spgci.config.proxies,
+        auth=spgci.config.auth,
+    )
+
+    # clear token cache and retry once if its a 401/403. shouldn't be hit unless token is expired..
+    if response.status_code in [401, 403]:
+        get_token.cache_clear()
+        raise AuthError("Invalid Username, Password or Appkey")
+
+    # if 429 check if more requests can be made today.
+    if response.status_code == 429:
+        rl = int(response.headers.get("x-ratelimit-remaining-day", 0))
+        if rl > 0:
+            raise PerSecondLimitError("Per Second Rate Limit Reached")
+        else:
+            raise DailyLimitError("Daily Rate Limit Reached")
+
+    if response.status_code != 200:
+        print(response.text)
+        response.raise_for_status()
+
+    return response
+
+
 def get_data(
     path: str,
     params: Dict[Any, Any],
@@ -193,7 +249,20 @@ def get_data(
         preview_rows = getattr(df, "_preview_rows", None)
         df = pd.concat(objs=[df, new_df], ignore_index=True)
         if preview_rows is not None:
-            df._preview_rows = preview_rows
+            # Preserve agent preview behavior without tripping type checkers.
+            setattr(df, "_preview_rows", preview_rows)
         # df: DataFrame = pd.concat(objs=[df, new_df], ignore_index=True)  # type: ignore
 
     return df
+
+
+def post_market_commentary(
+    body: Dict[Any, Any],
+    params: Optional[Dict[Any, Any]] = None,
+) -> requests.Response:
+    """POST to the unstructured Market Commentary endpoint.
+
+    This helper exists so skill executors don't need to embed raw endpoint paths.
+    """
+    url = f"{spgci.config.base_url}/api/unstructured/marketcommentary"
+    return _post(url=url, body=body, params=params, session=_session)

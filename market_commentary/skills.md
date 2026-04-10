@@ -1,125 +1,88 @@
-# Market Commentary (AIRD) — Skill
+---
+name: market-commentary-aird
+description: >
+  Retrieve and synthesize unstructured Market Commentary from AIRD (OpenSearch-backed) sources
+  via the `spgci` Python library. Use this skill whenever the user asks about commodity market
+  commentary, price summaries, crude/energy/commodity reports, or any AIRD-sourced narrative
+  content — even if they don't say "AIRD" or "market commentary" explicitly. Also use when the
+  user wants to know what commentary templates/topics are available.
+---
 
-This skill lets a client retrieve **unstructured** Market Commentary content from AIRD (OpenSearch-backed) sources.
+# Market Commentary (AIRD)
 
-It is intentionally modeled like a “Claude skills” workflow: **discover what’s available**, then **read the relevant items** and feed them into your LLM / downstream pipeline.
+Fetch unstructured market commentary from AIRD via the `spgci` library.
 
 ---
 
-## Endpoints
+## Step 1 — Discover available templates (when needed)
 
-### 1) List available Market Commentary templates
+```python
+import spgci as ci
 
-Use this when the customer asks about the *library/scope* of market commentaries, or when you need to pick the right template(s) before reading.
-
-Preferred:
-
-`POST /api/unstructured/marketcommentary`
-
-Body (JSON):
-
-```json
-{}
+templates_df = ci.MarketCommentary().list_templates()
 ```
 
-Response (JSON):
-- `result.templates[]`: items with:
-  - `template`: the template name to use in the read step
-  - `frequency`: best-effort inferred frequency (daily/weekly/monthly/etc)
-  - `minPublishDate` (optional): `YYYY-MM-DD` if available
-  - `maxPublishDate` (optional): `YYYY-MM-DD` if available
-- `result.count`
+**Templates DataFrame columns:**
 
-Example:
+| Column | Description |
+|---|---|
+| `template` | Template name to pass to the read step |
+| `frequency` | Inferred cadence: daily / weekly / monthly / etc. |
+| `minPublishDate` | Earliest available date (`YYYY-MM-DD`), if known |
+| `maxPublishDate` | Latest available date (`YYYY-MM-DD`), if known |
 
-```json
-{}
-```
+> Skip this step if the user already specifies a template name.
 
 ---
 
-### 2) Read Market Commentary content (unstructured data)
+## Step 2 — Read commentaries
 
-Use this when the customer wants the actual Market Commentary content.
+```python
+import spgci as ci
 
-Preferred:
-
-`POST /api/unstructured/marketcommentary`
-
-Body (JSON):
-
-```json
-{
-  "templates": ["Template A", "Template B"],
-  "fromDate": "YYYY-MM-DD",
-  "toDate": "YYYY-MM-DD",
-  "limit": 120
-}
+df = ci.MarketCommentary().get_market_commentaries(
+    templates=["North Sea Crude Daily Summary"],
+    from_date="2026-03-01",   # required, YYYY-MM-DD
+    to_date="2026-03-07",     # required, YYYY-MM-DD
+)
 ```
 
-Notes:
-- `limit` is optional and capped at 120.
+**Returns a `pandas.DataFrame`** — one row per commentary item.
 
-Response (JSON):
-- `result.rows[]`: tabular rows (one per commentary item)
-- `result.count`: number of rows returned
-- `result.requestedCount`: number of matched items before truncation
-- `result.truncated`: whether the response was truncated to `limit`
-- `result.truncationReason` (optional): human-readable truncation note
+**Key columns:**
 
-Row columns (current):
-- `template`
-- `publishDate` (derived from `documentDate`)
-- `rtpTimestamp`, `createdDate`
-- `id`, `sourceId`
-- `headline`, `title`, `name`
-- `contentType`, `packageType`
-- `sourceFilePath`, `chunk`
-- `content`
+| Column | Description |
+|---|---|
+| `template` | Source template |
+| `publishDate` | Derived from `documentDate` |
+| `headline` / `title` / `name` | Summary identifiers |
+| `content` | Full commentary text — primary field for synthesis |
+| `contentType` / `packageType` | Classification metadata |
+| `chunk` | Chunk index (for multi-part documents) |
+| `id` / `sourceId` / `sourceFilePath` | Identifiers / provenance |
+| `rtpTimestamp` / `createdDate` | Timestamps |
 
-Important limits:
-- The endpoint will **never fail** purely because too many items match.
-- If the match set exceeds `limit` (max 120), the endpoint returns the **most recent/highest scoring** items up to `limit` and sets `result.truncated=true`.
-
-Example:
-
-```json
-{
-  "templates": ["North Sea Crude Daily Summary"],
-  "fromDate": "2026-03-01",
-  "toDate": "2026-03-07"
-}
-```
+**Truncation:** If the result set exceeds the server limit (max 120), `df.attrs["spgci_market_commentary"]` will contain:
+`{ count, requestedCount, truncated, truncationReason }`
 
 ---
 
-## Question Types (workflow)
+## Workflow by request type
 
 ### Content / information request
+1. Infer `from_date` and `to_date` from the user's question.
+2. If the template is unclear, call `list_templates` first and select the best match.
+3. Call `get_market_commentaries` with the chosen template(s) and date range.
+4. Synthesize your answer from the `content` column.
 
-1. Infer `fromDate` and `toDate` from the user question (use `YYYY-MM-DD`).
-2. (Optional) call the **list** endpoint to identify the best matching template(s).
-3. Call the **read** endpoint with the selected template(s) and the date range.
-4. Use `result.rows[]` as the context for your answer/synthesis.
-
-### Coverage / scope of commentaries
-
-1. Call the **list** endpoint (optionally with a `phrase` hint).
-2. Present the returned templates (grouping by `frequency` if useful).
+### Coverage / scope request ("what topics are available?")
+1. Call `list_templates`.
+2. Present results grouped by `frequency`.
 
 ---
 
 ## Rules
-
-- Do not repeat the **read** request with identical parameters if the response indicates too many results.
-- Always include `fromDate` and `toDate` for **read**.
-- Start with the smallest appropriate date range, then expand only if needed.
-- Requests are entitlement-aware; results are filtered by the caller’s entitled packages.
-
----
-
-## Skill Doc Endpoint
-
-This document itself can be fetched via:
-
-`GET /api/skills/marketcommentary`
+- `from_date` and `to_date` are **always required** for `get_market_commentaries`.
+- Start with the **smallest reasonable date range**; expand only if results are insufficient.
+- **Never repeat** an identical request after a truncation response — narrow the range or template instead.
+- Results are entitlement-filtered server-side; missing data means the caller lacks access.
